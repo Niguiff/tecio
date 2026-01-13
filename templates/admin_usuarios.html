@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gestionar Usuarios</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Roboto', sans-serif; background: #f4f7f6; padding: 20px; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
+        
+        /* HEADER */
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 20px; margin-bottom: 20px;}
+        .back-link { text-decoration: none; color: #7f8c8d; font-weight: bold; }
+        h2 { margin: 0; color: #2c3e50; }
+
+        /* FORMULARIO DE CREACIÓN */
+        .create-box { background: #e8f6f3; padding: 20px; border-radius: 8px; border: 1px solid #d4efdf; margin-bottom: 30px; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap: 10px; align-items: end; }
+        
+        label { display: block; font-size: 0.8rem; font-weight: bold; color: #27ae60; margin-bottom: 5px; }
+        input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        
+        button { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: white; }
+        .btn-create { background: #27ae60; }
+        .btn-delete { background: #e74c3c; padding: 5px 10px; font-size: 0.8rem; }
+
+        /* TABLA */
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #34495e; color: white; text-align: left; padding: 12px; }
+        td { padding: 12px; border-bottom: 1px solid #eee; }
+        tr:hover { background: #f9f9f9; }
+
+        .badge { padding: 5px 10px; border-radius: 15px; font-size: 0.75rem; text-transform: uppercase; font-weight: bold; }
+        .badge-admin { background: #3498db; color: white; }
+        .badge-vendedor { background: #f1c40f; color: #333; }
+        
+        .alert { background: #d1ecf1; color: #0c5460; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>👥 Gestión de Personal</h2>
+            <a href="/admin" class="back-link">← Volver al Dashboard</a>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}<div class="alert">{{ messages[0] }}</div>{% endif %}
+        {% endwith %}
+
+        <div class="create-box">
+            <form method="POST">
+                <input type="hidden" name="accion" value="crear_usuario">
+                <div class="form-grid">
+                    <div>
+                        <label>Usuario</label>
+                        <input type="text" name="username" placeholder="Ej: pablo" required>
+                    </div>
+                    <div>
+                        <label>Contraseña</label>
+                        <input type="text" name="password" placeholder="Ej: 1234" required>
+                    </div>
+                    <div>
+                        <label>Rol</label>
+                        <select name="rol">
+                            <option value="vendedor">Vendedor</option>
+                            <option value="admin">Administrador</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Sucursal</label>
+                        <select name="sucursal">
+                            <option value="General">General (Admin)</option>
+                            <option value="Tristán Suárez">Tristán Suárez</option>
+                            <option value="Máximo Paz">Máximo Paz</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn-create">CREAR</button>
+                </div>
+            </form>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Usuario</th>
+                    <th>Rol</th>
+                    <th>Sucursal Asignada</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in usuarios %}
+                <tr>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td>
+                        <span class="badge {{ 'badge-admin' if u.rol == 'admin' else 'badge-vendedor' }}">
+                            {{ u.rol }}
+                        </span>
+                    </td>
+                    <td>{{ u.sucursal }}</td>
+                    <td>
+                        <form method="POST" onsubmit="return confirm('¿Eliminar a {{u.username}}?');">
+                            <input type="hidden" name="accion" value="eliminar_usuario">
+                            <input type="hidden" name="user_id" value="{{ u.id }}">
+                            <button type="submit" class="btn-delete">ELIMINAR</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

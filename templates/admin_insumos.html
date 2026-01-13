@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gestionar Envases</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Roboto', sans-serif; background: #f4f7f6; padding: 20px; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
+        
+        /* HEADER */
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 20px; margin-bottom: 20px;}
+        .back-link { text-decoration: none; color: #3498db; font-weight: bold; }
+        h2 { margin: 0; color: #2c3e50; }
+
+        /* FORMULARIOS */
+        .create-box { background: #e8f6f3; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .form-inline { display: flex; gap: 10px; align-items: center; }
+        input, select { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; }
+        
+        .btn-create { background: #27ae60; }
+        .btn-update { background: #3498db; }
+        
+        /* TABLA */
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        td, th { padding: 12px; border-bottom: 1px solid #eee; text-align: left; }
+        th { background: #34495e; color: white; }
+        
+        .badge { padding: 5px 10px; border-radius: 15px; font-size: 0.8rem; font-weight: bold; }
+        .bg-ok { background: #d5f5e3; color: #2ecc71; }
+        .bg-low { background: #fadbd8; color: #e74c3c; }
+
+        .alert { background: #d1ecf1; color: #0c5460; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>📦 Gestión de Insumos (Envases)</h2>
+            <a href="/admin" class="back-link">← Volver al Dashboard</a>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}<div class="alert">{{ messages[0] }}</div>{% endif %}
+        {% endwith %}
+
+        <div class="create-box">
+            <h4>Nuevo Insumo</h4>
+            <form method="POST" class="form-inline">
+                <input type="hidden" name="accion" value="crear">
+                <input type="text" name="nuevo_nombre" placeholder="Nombre (Ej: Servilletas)" required style="flex:1;">
+                <button type="submit" class="btn-create">CREAR</button>
+            </form>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Insumo</th>
+                    <th>Stock Actual</th>
+                    <th>Reponer (Unidades)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for i in insumos %}
+                <tr>
+                    <td><strong>{{ i.nombre }}</strong></td>
+                    <td>
+                        <span class="badge {{ 'bg-low' if i.stock < 50 else 'bg-ok' }}">
+                            {{ i.stock }} u.
+                        </span>
+                    </td>
+                    <td>
+                        <form method="POST" class="form-inline">
+                            <input type="hidden" name="accion" value="reponer">
+                            <input type="hidden" name="id_insumo" value="{{ i.id }}">
+                            <input type="number" name="cantidad" placeholder="Cantidad" style="width: 80px;" required>
+                            <button type="submit" class="btn-update">SUMAR</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
