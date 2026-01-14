@@ -1,8 +1,10 @@
-# gestor.py - VERSIÓN CORREGIDA Y CON DIAGNÓSTICO
+# gestor.py - CÓDIGO COMPLETO (SISTEMA TECIO + REPORTE EXCEL PRO)
 from models import db, Sabor, Insumo, Producto, Venta, ComboItem, Usuario
 from datetime import datetime
 import pandas as pd
 import io
+# IMPORTS PARA ESTILO VISUAL DE EXCEL
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 class HeladeriaManager:
     # --- CONSULTAS DE DATOS (READ) ---
@@ -116,11 +118,13 @@ class HeladeriaManager:
 
                 total_a_pagar += producto.precio
                 
+                # Construir detalle simple para la base de datos
                 detalle_item = f"{producto.nombre}"
                 if sabores_elegidos:
                     detalle_item += f" ({', '.join(sabores_elegidos)})"
                 descripcion_venta.append(detalle_item)
 
+                # Descontar stock
                 self._descontar_producto_recursivo(producto, sabores_elegidos)
 
             nueva_venta = Venta(
@@ -163,73 +167,149 @@ class HeladeriaManager:
                             raise Exception(f"Stock insuficiente: {sabor_obj.nombre}")
                         sabor_obj.stock_gramos -= peso_por_gusto
 
-    # --- GENERADOR DE REPORTES (CORREGIDO) ---
+    # --- REPORTE EXCEL AVANZADO (TIPO FACTURA DETALLADA) ---
     def generar_reporte_excel(self, fecha_inicio, fecha_fin):
-        print(f"DEBUG EXCEL: Buscando ventas entre {fecha_inicio} y {fecha_fin}")
+        print(f"Generando reporte detallado entre {fecha_inicio} y {fecha_fin}")
         
-        # 1. DIAGNÓSTICO: Imprimimos qué hay realmente en la base de datos
-        todas = Venta.query.all()
-        print(f"DEBUG EXCEL: Total de ventas en la DB: {len(todas)}")
-        for v in todas:
-            print(f" --> Venta ID: {v.id} | Fecha guardada: {v.fecha} | Total: {v.total}")
-
-        # 2. FILTRO SEGURO: Usamos el método 'between' que suele fallar menos
-        # Aseguramos que se filtren ventas incluso si la hora difiere un poco
+        # 1. Obtener ventas filtradas (Usando >= y <= para mayor precisión)
         ventas = Venta.query.filter(Venta.fecha >= fecha_inicio).filter(Venta.fecha <= fecha_fin).all()
-        
-        print(f"DEBUG EXCEL: Ventas encontradas tras filtrar: {len(ventas)}")
 
         if not ventas:
             return None
 
-        data_ventas = []
-        todos_sabores = []
-        total_gramos_vendidos = 0
-        mapa_pesos = {p.nombre: p.peso_helado for p in Producto.query.all()}
+        # 2. Mapa de Precios (Para poner el precio unitario en el Excel)
+        mapa_precios = {p.nombre: p.precio for p in Producto.query.all()}
+        
+        data_detalle = []
+        gran_total = 0
 
         for v in ventas:
+            # Desglosar el texto "1kg (Lim); 1/4 (Dulce)" en filas separadas
             items_texto = v.detalle.split(";")
-            for item in items_texto:
-                item = item.strip()
-                nombre_prod = item.split("(")[0].strip()
-                if nombre_prod in mapa_pesos:
-                    total_gramos_vendidos += mapa_pesos[nombre_prod]
-                if "(" in item and ")" in item:
-                    contenido = item.split("(")[1].split(")")[0]
-                    sabores = [s.strip() for s in contenido.split(",")]
-                    todos_sabores.extend(sabores)
+            
+            # --- FILAS DE ITEMS ---
+            for item_raw in items_texto:
+                item_raw = item_raw.strip()
+                if not item_raw: continue
 
-            data_ventas.append({
-                "Fecha": v.fecha.strftime("%d/%m/%Y"),
-                "Hora": v.fecha.strftime("%H:%M"),
-                "Sucursal": v.sucursal if v.sucursal else "General",
-                "Detalle Completo": v.detalle,
-                "Medio Pago": v.medio_pago,
-                "Total ($)": v.total
-            })
+                # Separar "Nombre Producto" de "Sabores"
+                if "(" in item_raw and ")" in item_raw:
+                    parts = item_raw.split("(")
+                    nombre_prod = parts[0].strip()
+                    gustos = parts[1].replace(")", "").strip()
+                else:
+                    nombre_prod = item_raw
+                    gustos = "-"
 
-        df_sabores = pd.Series(todos_sabores)
-        top_sabores = df_sabores.value_counts().head(3)
+                # Buscar precio unitario aproximado (del mapa actual)
+                precio_unitario = mapa_precios.get(nombre_prod, 0)
+                
+                fila_item = {
+                    "Fecha": v.fecha.strftime("%d/%m/%Y"),
+                    "Hora": v.fecha.strftime("%H:%M"),
+                    "Sucursal": v.sucursal if v.sucursal else "General",
+                    "Envases (Item)": nombre_prod,
+                    "Sabores / Detalle": gustos,
+                    "Medio Pago": v.medio_pago,
+                    "Total ($)": precio_unitario,
+                    "Tipo Fila": "Item" # Marca interna para pintar después
+                }
+                data_detalle.append(fila_item)
+            
+            # --- FILA DE SUBTOTAL ---
+            fila_subtotal = {
+                "Fecha": "",
+                "Hora": "",
+                "Sucursal": "",
+                "Envases (Item)": "SUBTOTAL VENTA",
+                "Sabores / Detalle": "",
+                "Medio Pago": "",
+                "Total ($)": v.total, # El total real de la venta
+                "Tipo Fila": "Subtotal"
+            }
+            data_detalle.append(fila_subtotal)
+            gran_total += v.total
+
+        # --- FILA FINAL DE GRAN TOTAL ---
+        fila_final = {
+            "Fecha": "", "Hora": "", "Sucursal": "",
+            "Envases (Item)": "TOTAL RECAUDADO", "Sabores / Detalle": "",
+            "Medio Pago": "", "Total ($)": gran_total,
+            "Tipo Fila": "GranTotal"
+        }
+        data_detalle.append(fila_final)
+
+        # 3. Crear DataFrame y Estilizar con OpenPyXL
+        df = pd.DataFrame(data_detalle)
         
-        df_detalle = pd.DataFrame(data_ventas)
-        df_resumen = pd.DataFrame({
-            "Métrica": ["Total Recaudado", "Total Kilos Vendidos", "Cant. Ventas", "Top 1 Sabor", "Top 2 Sabor", "Top 3 Sabor"],
-            "Valor": [
-                f"${sum(v.total for v in ventas)}",
-                f"{total_gramos_vendidos / 1000:.2f} kg",
-                len(ventas),
-                f"{top_sabores.index[0]} ({top_sabores.values[0]})" if len(top_sabores) > 0 else "-",
-                f"{top_sabores.index[1]} ({top_sabores.values[1]})" if len(top_sabores) > 1 else "-",
-                f"{top_sabores.index[2]} ({top_sabores.values[2]})" if len(top_sabores) > 2 else "-"
-            ]
-        })
+        # Quitamos la columna auxiliar "Tipo Fila" antes de exportar
+        tipos_fila = df["Tipo Fila"].tolist() 
+        df = df.drop(columns=["Tipo Fila"])
 
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_resumen.to_excel(writer, sheet_name='Resumen General', index=False)
-            df_detalle.to_excel(writer, sheet_name='Detalle Ventas', index=False)
-            worksheet = writer.sheets['Detalle Ventas']
-            worksheet.column_dimensions['D'].width = 50 
+            df.to_excel(writer, sheet_name='Detalle Caja', index=False)
             
+            workbook = writer.book
+            ws = writer.sheets['Detalle Caja']
+
+            # --- ESTILOS VISUALES ---
+            # Definir colores y bordes
+            borde_fino = Side(border_style="thin", color="000000")
+            borde_cuadro = Border(left=borde_fino, right=borde_fino, top=borde_fino, bottom=borde_fino)
+            
+            fill_header = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid") # Naranja
+            fill_subtotal = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid") # Verde Claro
+            fill_total = PatternFill(start_color="A9D08E", end_color="A9D08E", fill_type="solid") # Verde Oscuro
+            
+            font_header = Font(bold=True, color="000000")
+            font_bold = Font(bold=True)
+
+            # 1. Formatear Encabezados (Fila 1)
+            for cell in ws[1]:
+                cell.fill = fill_header
+                cell.font = font_header
+                cell.alignment = Alignment(horizontal='center')
+                cell.border = borde_cuadro
+
+            # 2. Formatear Filas de Datos
+            for i, tipo in enumerate(tipos_fila):
+                row_idx = i + 2 # +2 porque Excel empieza en fila 1 y la 1 es el header
+                
+                # Aplicar bordes a toda la fila
+                for col in range(1, 8): # Columnas A a G
+                    cell = ws.cell(row=row_idx, column=col)
+                    cell.border = borde_cuadro
+                    
+                    # Formato Moneda para la última columna (Precio)
+                    if col == 7: 
+                        cell.number_format = '$ #,##0'
+
+                # Estilos especiales según tipo de fila
+                if tipo == "Subtotal":
+                    # Pintar toda la fila de verde claro y poner negrita
+                    for col in range(1, 8):
+                        ws.cell(row=row_idx, column=col).fill = fill_subtotal
+                        ws.cell(row=row_idx, column=col).font = font_bold
+                    # Alinear "SUBTOTAL VENTA" a la derecha
+                    ws.cell(row=row_idx, column=4).alignment = Alignment(horizontal='right')
+
+                elif tipo == "GranTotal":
+                    # Pintar de verde oscuro, negrita y letra más grande
+                    for col in range(1, 8):
+                        celda = ws.cell(row=row_idx, column=col)
+                        celda.fill = fill_total
+                        celda.font = Font(bold=True, size=12)
+                    ws.cell(row=row_idx, column=4).alignment = Alignment(horizontal='right')
+
+            # 3. Ajustar Ancho de Columnas para que se lea bien
+            ws.column_dimensions['A'].width = 12 # Fecha
+            ws.column_dimensions['B'].width = 8  # Hora
+            ws.column_dimensions['C'].width = 15 # Sucursal
+            ws.column_dimensions['D'].width = 25 # Envases
+            ws.column_dimensions['E'].width = 40 # Sabores
+            ws.column_dimensions['F'].width = 12 # Medio Pago
+            ws.column_dimensions['G'].width = 15 # Total
+
         output.seek(0)
         return output
