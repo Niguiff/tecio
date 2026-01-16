@@ -1,6 +1,9 @@
-# gestor.py - CÓDIGO COMPLETO (SISTEMA TECIO + REPORTE EXCEL PRO)
+# gestor.py - VERSIÓN FINAL (SISTEMA TECIO)
+# Incluye: Recaudación Mensual, Contador Diario y Reporte Excel Estilizado
+
 from models import db, Sabor, Insumo, Producto, Venta, ComboItem, Usuario
 from datetime import datetime
+from sqlalchemy import extract, func # NECESARIO PARA FILTRAR FECHAS (MES/DÍA)
 import pandas as pd
 import io
 # IMPORTS PARA ESTILO VISUAL DE EXCEL
@@ -23,6 +26,22 @@ class HeladeriaManager:
     def obtener_usuarios(self):
         return Usuario.query.all()
 
+    # --- ESTADÍSTICAS INTELIGENTES (NUEVO) ---
+    def obtener_recaudacion_mensual(self):
+        """Calcula el total vendido SOLO en el mes y año actual."""
+        hoy = datetime.now()
+        total = db.session.query(db.func.sum(Venta.total)).filter(
+            extract('year', Venta.fecha) == hoy.year,
+            extract('month', Venta.fecha) == hoy.month
+        ).scalar()
+        return total if total else 0
+
+    def obtener_cantidad_ventas_hoy(self):
+        """Cuenta cuántas ventas se hicieron hoy (ignora la hora, solo fecha)."""
+        hoy = datetime.now().date()
+        cantidad = Venta.query.filter(func.date(Venta.fecha) == hoy).count()
+        return cantidad
+
     # --- GESTIÓN DE USUARIOS ---
     def crear_usuario(self, username, password, rol, sucursal):
         if Usuario.query.filter_by(username=username).first():
@@ -41,7 +60,8 @@ class HeladeriaManager:
             return True, f"Usuario {nombre} eliminado."
         return False, "Usuario no encontrado."
 
-    def obtener_recaudacion_total(self):
+    def obtener_recaudacion_total_historica(self):
+        # Esta función queda por si alguna vez quieres ver el histórico total
         resultado = db.session.query(db.func.sum(Venta.total)).scalar()
         return resultado if resultado else 0
 
@@ -171,20 +191,19 @@ class HeladeriaManager:
     def generar_reporte_excel(self, fecha_inicio, fecha_fin):
         print(f"Generando reporte detallado entre {fecha_inicio} y {fecha_fin}")
         
-        # 1. Obtener ventas filtradas (Usando >= y <= para mayor precisión)
+        # 1. Obtener ventas filtradas
         ventas = Venta.query.filter(Venta.fecha >= fecha_inicio).filter(Venta.fecha <= fecha_fin).all()
 
         if not ventas:
             return None
 
-        # 2. Mapa de Precios (Para poner el precio unitario en el Excel)
+        # 2. Mapa de Precios
         mapa_precios = {p.nombre: p.precio for p in Producto.query.all()}
         
         data_detalle = []
         gran_total = 0
 
         for v in ventas:
-            # Desglosar el texto "1kg (Lim); 1/4 (Dulce)" en filas separadas
             items_texto = v.detalle.split(";")
             
             # --- FILAS DE ITEMS ---
@@ -201,7 +220,6 @@ class HeladeriaManager:
                     nombre_prod = item_raw
                     gustos = "-"
 
-                # Buscar precio unitario aproximado (del mapa actual)
                 precio_unitario = mapa_precios.get(nombre_prod, 0)
                 
                 fila_item = {
@@ -212,7 +230,7 @@ class HeladeriaManager:
                     "Sabores / Detalle": gustos,
                     "Medio Pago": v.medio_pago,
                     "Total ($)": precio_unitario,
-                    "Tipo Fila": "Item" # Marca interna para pintar después
+                    "Tipo Fila": "Item"
                 }
                 data_detalle.append(fila_item)
             
@@ -224,7 +242,7 @@ class HeladeriaManager:
                 "Envases (Item)": "SUBTOTAL VENTA",
                 "Sabores / Detalle": "",
                 "Medio Pago": "",
-                "Total ($)": v.total, # El total real de la venta
+                "Total ($)": v.total,
                 "Tipo Fila": "Subtotal"
             }
             data_detalle.append(fila_subtotal)
@@ -242,7 +260,6 @@ class HeladeriaManager:
         # 3. Crear DataFrame y Estilizar con OpenPyXL
         df = pd.DataFrame(data_detalle)
         
-        # Quitamos la columna auxiliar "Tipo Fila" antes de exportar
         tipos_fila = df["Tipo Fila"].tolist() 
         df = df.drop(columns=["Tipo Fila"])
 
@@ -254,7 +271,6 @@ class HeladeriaManager:
             ws = writer.sheets['Detalle Caja']
 
             # --- ESTILOS VISUALES ---
-            # Definir colores y bordes
             borde_fino = Side(border_style="thin", color="000000")
             borde_cuadro = Border(left=borde_fino, right=borde_fino, top=borde_fino, bottom=borde_fino)
             
@@ -265,51 +281,44 @@ class HeladeriaManager:
             font_header = Font(bold=True, color="000000")
             font_bold = Font(bold=True)
 
-            # 1. Formatear Encabezados (Fila 1)
+            # 1. Formatear Encabezados
             for cell in ws[1]:
                 cell.fill = fill_header
                 cell.font = font_header
                 cell.alignment = Alignment(horizontal='center')
                 cell.border = borde_cuadro
 
-            # 2. Formatear Filas de Datos
+            # 2. Formatear Filas
             for i, tipo in enumerate(tipos_fila):
-                row_idx = i + 2 # +2 porque Excel empieza en fila 1 y la 1 es el header
+                row_idx = i + 2 
                 
-                # Aplicar bordes a toda la fila
-                for col in range(1, 8): # Columnas A a G
+                for col in range(1, 8):
                     cell = ws.cell(row=row_idx, column=col)
                     cell.border = borde_cuadro
-                    
-                    # Formato Moneda para la última columna (Precio)
                     if col == 7: 
                         cell.number_format = '$ #,##0'
 
-                # Estilos especiales según tipo de fila
                 if tipo == "Subtotal":
-                    # Pintar toda la fila de verde claro y poner negrita
                     for col in range(1, 8):
                         ws.cell(row=row_idx, column=col).fill = fill_subtotal
                         ws.cell(row=row_idx, column=col).font = font_bold
-                    # Alinear "SUBTOTAL VENTA" a la derecha
                     ws.cell(row=row_idx, column=4).alignment = Alignment(horizontal='right')
 
                 elif tipo == "GranTotal":
-                    # Pintar de verde oscuro, negrita y letra más grande
                     for col in range(1, 8):
                         celda = ws.cell(row=row_idx, column=col)
                         celda.fill = fill_total
                         celda.font = Font(bold=True, size=12)
                     ws.cell(row=row_idx, column=4).alignment = Alignment(horizontal='right')
 
-            # 3. Ajustar Ancho de Columnas para que se lea bien
-            ws.column_dimensions['A'].width = 12 # Fecha
-            ws.column_dimensions['B'].width = 8  # Hora
-            ws.column_dimensions['C'].width = 15 # Sucursal
-            ws.column_dimensions['D'].width = 25 # Envases
-            ws.column_dimensions['E'].width = 40 # Sabores
-            ws.column_dimensions['F'].width = 12 # Medio Pago
-            ws.column_dimensions['G'].width = 15 # Total
+            # 3. Anchos de columna
+            ws.column_dimensions['A'].width = 12
+            ws.column_dimensions['B'].width = 8
+            ws.column_dimensions['C'].width = 15
+            ws.column_dimensions['D'].width = 25
+            ws.column_dimensions['E'].width = 40
+            ws.column_dimensions['F'].width = 12
+            ws.column_dimensions['G'].width = 15
 
         output.seek(0)
         return output

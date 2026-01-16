@@ -99,18 +99,34 @@ def vender():
 
 # --- RUTAS DE ADMINISTRADOR ---
 
+# EN APP.PY, BUSCA ESTA FUNCIÓN Y REEMPLÁZALA
 @app.route('/admin', methods=['GET', 'POST'])
 @login_required
 def admin_dashboard():
     if current_user.rol != 'admin': return redirect(url_for('vender'))
     
-    # Calcular totales
-    total_gral = gestor.obtener_recaudacion_total()
-    # Últimas 50 ventas para mostrar en tabla
+    # 1. Obtener Recaudación del Mes actual
+    total_mes = gestor.obtener_recaudacion_mensual()
+    
+    # 2. Obtener Cantidad de ventas de HOY
+    ventas_hoy_count = gestor.obtener_cantidad_ventas_hoy()
+    
+    # 3. Calcular nombre del mes en español
+    nombres_meses = {
+        1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
+        5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO",
+        9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE"
+    }
+    mes_actual_nombre = nombres_meses[datetime.now().month]
+    titulo_recaudacion = f"RECAUDACIÓN {mes_actual_nombre}"
+
+    # Últimas ventas para tabla
     ventas = Venta.query.order_by(Venta.fecha.desc()).limit(50).all() 
     
     return render_template('admin_dashboard.html', 
-                           recaudacion=total_gral, 
+                           recaudacion=total_mes,
+                           titulo_recaudacion=titulo_recaudacion, # Enviamos el título dinámico
+                           cantidad_ventas_hoy=ventas_hoy_count, # Enviamos el contador arreglado
                            ventas=ventas)
 
 # RUTA ESPECIAL PARA DESCARGAR REPORTE (MODIFICADA CON MODO DETECTIVE)
