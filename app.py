@@ -1,69 +1,60 @@
-# app.py - VERSIÓN COMPLETA CON DIAGNÓSTICO DE ERRORES
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file
+from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from models import db, Usuario, Sabor, Insumo, Producto, Venta
-from gestor import HeladeriaManager
 from datetime import datetime
-import io
-import pandas as pd
+from sqlalchemy import func
 
+# Importamos nuestros modelos (Incluida la nueva CierreCaja) y el gestor
+from models import db, Usuario, Venta, Producto, Insumo, Sabor, ComboItem, CierreCaja
+from gestor import HeladeriaManager
+
+# --- CONFIGURACIÓN INICIAL ---
 app = Flask(__name__)
-app.secret_key = 'helado_secreto_super_seguro'
-
-# --- CONFIGURACIÓN BASE DE DATOS ---
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///heladeria.db'
+app.config['SECRET_KEY'] = 'tu_clave_secreta_super_segura' 
+# Timeout agregado para evitar bloqueos en Google Drive/OneDrive
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///heladeria.db?timeout=15' 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Inicializar Extensiones
 db.init_app(app)
-gestor = HeladeriaManager()
-
-# --- CONFIGURACIÓN LOGIN ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
+# Instancia del Gestor
+gestor = HeladeriaManager()
+
+# --- GESTIÓN DE SESIÓN ---
 @login_manager.user_loader
 def load_user(user_id):
     return Usuario.query.get(int(user_id))
 
-# --- HELPER: Función para agrupar sabores (Diseño Móvil) ---
-def clasificar_sabores(lista_sabores):
-    grupos = {
-        "🍫 Chocolates": [],
-        "🍯 Dulces de Leche": [],
-        "🍓 Frutales": [],
-        "🍦 Cremas y Otros": []
-    }
-    
-    for s in lista_sabores:
-        nombre = s.nombre.lower()
-        if "chocolate" in nombre or "cacao" in nombre:
-            grupos["🍫 Chocolates"].append(s)
-        elif "dulce de leche" in nombre:
-            grupos["🍯 Dulces de Leche"].append(s)
-        elif any(x in nombre for x in ["fruti", "limon", "anana", "durazno", "cereza", "banana", "manzana", "maracuya", "naranja", "melon"]):
-            grupos["🍓 Frutales"].append(s)
+@app.route('/')
+def index():
+    if current_user.is_authenticated:
+        if current_user.rol == 'admin':
+            return redirect(url_for('admin_dashboard'))
         else:
-            grupos["🍦 Cremas y Otros"].append(s)
-    return grupos
-
-# --- RUTAS DE ACCESO ---
+            return redirect(url_for('vender'))
+    return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        user = request.form.get('username')
-        pwd = request.form.get('password')
-        usuario_db = Usuario.query.filter_by(username=user).first()
+        username = request.form.get('username')
+        password = request.form.get('password')
         
-        if usuario_db and usuario_db.password == pwd:
-            login_user(usuario_db)
-            if usuario_db.rol == 'admin':
+        user = Usuario.query.filter_by(username=username).first()
+        
+        if user and user.password == password:
+            login_user(user)
+            if user.rol == 'admin':
                 return redirect(url_for('admin_dashboard'))
             else:
                 return redirect(url_for('vender'))
         else:
-            flash("Usuario o contraseña incorrectos")
+            flash('Usuario o contraseña incorrectos')
+    
     return render_template('login.html')
 
 @app.route('/logout')
@@ -72,106 +63,110 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-@app.route('/')
-def index():
-    return redirect(url_for('login'))
-
-# --- RUTA DE VENTA (SUCURSALES) ---
+# --- ÁREA DE VENTAS (POS) ---
 @app.route('/vender', methods=['GET', 'POST'])
 @login_required
 def vender():
-    if request.is_json:
-        datos = request.get_json()
-        # Inyectamos la sucursal del usuario actual
-        exito, mensaje = gestor.procesar_carrito(datos, sucursal=current_user.sucursal)
+    if request.method == 'POST':
+        data = request.get_json()
+        sucursal_actual = current_user.sucursal 
+        if not sucursal_actual: sucursal_actual = "General"
+
+        exito, mensaje = gestor.procesar_carrito(data, sucursal=sucursal_actual)
         
         if exito:
-            return jsonify({"status": "ok", "msg": mensaje})
+            return jsonify({'success': True, 'msg': mensaje})
         else:
-            return jsonify({"status": "error", "msg": mensaje}), 400
+            return jsonify({'success': False, 'msg': mensaje}), 400
 
-    lista_sabores = gestor.obtener_sabores()
-    sabores_agrupados = clasificar_sabores(lista_sabores)
-    return render_template('vender.html', 
-                           productos=gestor.obtener_productos(), 
-                           sabores_agrupados=sabores_agrupados,
-                           sucursal=current_user.sucursal)
+    sabores = gestor.obtener_sabores_venta()
+    productos = gestor.obtener_productos()
+    return render_template('vender.html', sabores=sabores, productos=productos, vendedor=current_user)
 
-# --- RUTAS DE ADMINISTRADOR ---
+# --- PANEL DEL VENDEDOR (MI CAJA) ---
+@app.route('/mi_caja')
+@login_required
+def panel_vendedor():
+    if current_user.rol != 'vendedor': return redirect(url_for('admin_dashboard'))
+    
+    mi_sucursal = current_user.sucursal
+    
+    # Usamos la lógica de turnos para que coincida con el cierre del admin
+    ventas_turno = gestor.obtener_ventas_turno_actual(mi_sucursal)
+    
+    # Ordenamos visualmente: lo más reciente arriba
+    ventas_turno.sort(key=lambda x: x.fecha, reverse=True)
+    
+    # Cálculos sobre ese turno específico
+    total_recaudado = sum(v.total for v in ventas_turno)
+    cantidad_ventas = len(ventas_turno)
+    
+    ventas_efectivo = [v for v in ventas_turno if v.medio_pago == 'Efectivo']
+    total_efectivo = sum(v.total for v in ventas_efectivo)
+    cantidad_efectivo = len(ventas_efectivo)
+    
+    return render_template('panel_vendedor.html', sucursal=mi_sucursal, ventas=ventas_turno, total_recaudado=total_recaudado, cantidad_ventas=cantidad_ventas, total_efectivo=total_efectivo, cantidad_efectivo=cantidad_efectivo)
 
-# EN APP.PY, BUSCA ESTA FUNCIÓN Y REEMPLÁZALA
+# --- DASHBOARD ADMIN (ACTUALIZADO CON DESGLOSE PARA MODAL) ---
 @app.route('/admin', methods=['GET', 'POST'])
 @login_required
 def admin_dashboard():
     if current_user.rol != 'admin': return redirect(url_for('vender'))
     
-    # 1. Obtener Recaudación del Mes actual
-    total_mes = gestor.obtener_recaudacion_mensual()
-    
-    # 2. Obtener Cantidad de ventas de HOY
-    ventas_hoy_count = gestor.obtener_cantidad_ventas_hoy()
-    
-    # 3. Calcular nombre del mes en español
-    nombres_meses = {
-        1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
-        5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO",
-        9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE"
-    }
-    mes_actual_nombre = nombres_meses[datetime.now().month]
-    titulo_recaudacion = f"RECAUDACIÓN {mes_actual_nombre}"
+    # 1. MÁXIMO PAZ: Ventas y Desglose
+    ventas_mp = gestor.obtener_ventas_turno_actual("Máximo Paz")
+    total_mp = sum(v.total for v in ventas_mp)
+    count_mp = len(ventas_mp)
+    # Calculamos desglose para el modal (Efectivo vs Digital)
+    efectivo_mp = sum(v.total for v in ventas_mp if v.medio_pago == 'Efectivo')
+    digital_mp = total_mp - efectivo_mp 
 
-    # Últimas ventas para tabla
-    ventas = Venta.query.order_by(Venta.fecha.desc()).limit(50).all() 
-    
-    return render_template('admin_dashboard.html', 
-                           recaudacion=total_mes,
-                           titulo_recaudacion=titulo_recaudacion, # Enviamos el título dinámico
-                           cantidad_ventas_hoy=ventas_hoy_count, # Enviamos el contador arreglado
-                           ventas=ventas)
+    # 2. TRISTÁN SUÁREZ: Ventas y Desglose
+    ventas_ts = gestor.obtener_ventas_turno_actual("Tristán Suárez")
+    total_ts = sum(v.total for v in ventas_ts)
+    count_ts = len(ventas_ts)
+    # Calculamos desglose para el modal
+    efectivo_ts = sum(v.total for v in ventas_ts if v.medio_pago == 'Efectivo')
+    digital_ts = total_ts - efectivo_ts
 
-# RUTA ESPECIAL PARA DESCARGAR REPORTE (MODIFICADA CON MODO DETECTIVE)
-@app.route('/admin/reporte', methods=['POST'])
+    # Globales
+    total_global_turno = total_mp + total_ts
+    count_global_turno = count_mp + count_ts
+
+    # Historial reciente
+    ultimas_ventas = Venta.query.order_by(Venta.fecha.desc()).limit(10).all()
+
+    # Mes actual
+    nombres_meses = {1:"ENERO", 2:"FEBRERO", 3:"MARZO", 4:"ABRIL", 5:"MAYO", 6:"JUNIO", 7:"JULIO", 8:"AGOSTO", 9:"SEPTIEMBRE", 10:"OCTUBRE", 11:"NOVIEMBRE", 12:"DICIEMBRE"}
+    mes_actual = nombres_meses[datetime.now().month]
+
+    return render_template('admin_dashboard.html',
+                           mes_actual=mes_actual,
+                           total_global=total_global_turno,
+                           count_global=count_global_turno,
+                           # Datos MP
+                           total_mp=total_mp, count_mp=count_mp,
+                           efectivo_mp=efectivo_mp, digital_mp=digital_mp,
+                           # Datos TS
+                           total_ts=total_ts, count_ts=count_ts,
+                           efectivo_ts=efectivo_ts, digital_ts=digital_ts,
+                           # Extras
+                           ventas=ultimas_ventas)
+
+# --- PROCESAR CIERRE DE CAJA (BOTONES ROJOS) ---
+@app.route('/admin/cerrar-caja', methods=['POST'])
 @login_required
-def descargar_reporte():
+def procesar_cierre():
     if current_user.rol != 'admin': return redirect(url_for('vender'))
     
-    try:
-        print("--- INICIANDO DESCARGA DE REPORTE ---")
-        fecha_inicio_str = request.form.get('fecha_inicio')
-        fecha_fin_str = request.form.get('fecha_fin')
-        
-        print(f"Fechas recibidas: {fecha_inicio_str} al {fecha_fin_str}")
+    sucursal = request.form.get('sucursal')
+    if sucursal:
+        exito, msg = gestor.cerrar_caja_sucursal(sucursal)
+        flash(msg)
+    
+    return redirect(url_for('admin_dashboard'))
 
-        # Convertir texto a fecha
-        inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d')
-        # Al fin del día le ponemos 23:59:59
-        fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-
-        print("Generando Excel en gestor...")
-        archivo_excel = gestor.generar_reporte_excel(inicio, fin)
-        
-        if archivo_excel:
-            print("Excel generado OK. Enviando archivo...")
-            nombre_archivo = f"Reporte_{fecha_inicio_str}.xlsx"
-            return send_file(
-                archivo_excel,
-                as_attachment=True,
-                download_name=nombre_archivo,
-                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
-        else:
-            print("Gestor devolvió None (Sin datos)")
-            flash("⚠️ No se encontraron ventas en ese rango de fechas.")
-            return redirect(url_for('admin_dashboard'))
-
-    except Exception as e:
-        # AQUÍ CAPTURAMOS EL ERROR REAL
-        error_msg = f"❌ ERROR AL DESCARGAR: {str(e)}"
-        print(error_msg)
-        flash(error_msg) # Esto saldrá en rojo en tu pantalla
-        return redirect(url_for('admin_dashboard'))
-
-# GESTIÓN DE SABORES
+# --- GESTIÓN SABORES ---
 @app.route('/admin/sabores', methods=['GET', 'POST'])
 @login_required
 def gestion_sabores():
@@ -180,129 +175,183 @@ def gestion_sabores():
     if request.method == 'POST':
         accion = request.form.get('accion')
         
-        if accion == 'agregar_stock':
+        if accion == 'crear':
+            nombre = request.form.get('nombre')
+            nuevo_sabor = Sabor(nombre=nombre, stock_maximo=0, stock_tristan=0)
+            db.session.add(nuevo_sabor)
+            db.session.commit()
+            flash(f"Sabor {nombre} creado.")
+
+        elif accion == 'agregar_stock':
             nombre = request.form.get('sabor_nombre')
             baldes = float(request.form.get('cant_baldes'))
-            gramos = baldes * 6000 # 1 Balde = 6kg
-            gestor.reponer_stock_sabor(nombre, gramos)
-            flash(f"Se agregaron {baldes} baldes a {nombre}")
-            
-        elif accion == 'crear_sabor':
-            nuevo = request.form.get('nuevo_nombre')
-            db.session.add(Sabor(nombre=nuevo, stock_gramos=0))
-            db.session.commit()
-            flash(f"Sabor {nuevo} creado.")
+            sucursal = request.form.get('sucursal_destino') 
+            gramos = baldes * 6000 
+            exito, msg = gestor.reponer_stock_sabor(nombre, gramos, sucursal)
+            flash(msg if exito else "Error al reponer stock.")
 
-        elif accion == 'eliminar_sabor':
-            id_borrar = request.form.get('id_sabor')
-            Sabor.query.filter_by(id=id_borrar).delete()
-            db.session.commit()
-            flash("Sabor eliminado.")
+        elif accion == 'corregir_stock':
+            nombre = request.form.get('sabor_nombre')
+            baldes_reales = float(request.form.get('cant_baldes_real'))
+            sucursal = request.form.get('sucursal_destino')
+            exito, msg = gestor.corregir_stock_manual(nombre, baldes_reales, sucursal)
+            flash(msg)
 
-    return render_template('admin_sabores.html', sabores=gestor.obtener_sabores())
+        elif accion == 'cambiar_estado':
+            nombre = request.form.get('sabor_nombre')
+            sabor = Sabor.query.filter_by(nombre=nombre).first()
+            if sabor:
+                sabor.activo = not sabor.activo
+                db.session.commit()
+    
+    sabores = gestor.obtener_todos_sabores()
+    return render_template('admin_sabores.html', sabores=sabores)
 
-# GESTIÓN DE INSUMOS
+# --- GESTIÓN INSUMOS ---
 @app.route('/admin/insumos', methods=['GET', 'POST'])
 @login_required
 def gestion_insumos():
     if current_user.rol != 'admin': return redirect(url_for('vender'))
-    
+
     if request.method == 'POST':
         accion = request.form.get('accion')
+
         if accion == 'reponer':
-            id_ins = int(request.form.get('id_insumo'))
-            cant = int(request.form.get('cantidad'))
-            gestor.reponer_stock_insumo(id_ins, cant)
-            flash("Stock actualizado")
+            id_insumo = request.form.get('id_insumo')
+            cantidad = int(request.form.get('cantidad'))
+            sucursal = request.form.get('sucursal_destino')
+            exito, msg = gestor.reponer_stock_insumo(id_insumo, cantidad, sucursal)
+            flash(msg)
+        
         elif accion == 'crear':
-            nombre = request.form.get('nuevo_nombre')
-            db.session.add(Insumo(nombre=nombre, stock=0))
+            nombre = request.form.get('nombre')
+            nuevo_insumo = Insumo(nombre=nombre, stock_maximo=0, stock_tristan=0)
+            db.session.add(nuevo_insumo)
             db.session.commit()
-            flash("Insumo creado")
+            flash(f"Insumo '{nombre}' creado.")
 
-    return render_template('admin_insumos.html', insumos=gestor.obtener_insumos())
+        elif accion == 'eliminar':
+            id_insumo = request.form.get('id_insumo')
+            insumo = Insumo.query.get(id_insumo)
+            if insumo:
+                try:
+                    db.session.delete(insumo)
+                    db.session.commit()
+                    flash(f"Insumo '{insumo.nombre}' eliminado.")
+                except Exception as e:
+                    db.session.rollback()
+                    flash("No se puede eliminar: está asociado a un producto activo.")
 
-# GESTIÓN DE PRECIOS
+    insumos = gestor.obtener_insumos()
+    return render_template('admin_insumos.html', insumos=insumos)
+
+# --- GESTIÓN PRECIOS (ABM + COMBOS) ---
 @app.route('/admin/precios', methods=['GET', 'POST'])
 @login_required
 def gestion_precios():
     if current_user.rol != 'admin': return redirect(url_for('vender'))
+    insumos = gestor.obtener_insumos()
     
-    if request.method == 'POST':
-        id_prod = int(request.form.get('id_producto'))
-        precio_nuevo = float(request.form.get('nuevo_precio'))
-        gestor.actualizar_precio(id_prod, precio_nuevo)
-        flash("Precio actualizado")
+    todos_los_productos = Producto.query.filter_by(es_combo=False).all()
 
-    return render_template('admin_precios.html', productos=gestor.obtener_productos())
-
-# GESTIÓN DE USUARIOS
-@app.route('/admin/usuarios', methods=['GET', 'POST'])
-@login_required
-def gestion_usuarios():
-    if current_user.rol != 'admin': return redirect(url_for('vender'))
-    
     if request.method == 'POST':
         accion = request.form.get('accion')
         
-        if accion == 'crear_usuario':
-            user = request.form.get('username')
-            pwd = request.form.get('password')
-            rol = request.form.get('rol')
-            sucursal = request.form.get('sucursal')
-            exito, msg = gestor.crear_usuario(user, pwd, rol, sucursal)
-            flash(msg)
+        if accion == 'actualizar_precio':
+            id_prod = request.form.get('id_producto')
+            nuevo_precio = float(request.form.get('nuevo_precio'))
+            gestor.actualizar_precio(id_prod, nuevo_precio)
+            flash("Precio actualizado.")
 
-        elif accion == 'eliminar_usuario':
-            id_borrar = int(request.form.get('user_id'))
-            if id_borrar == current_user.id:
-                flash("⚠️ No puedes eliminarte a ti mismo.")
+        elif accion == 'eliminar':
+            id_prod = request.form.get('id_producto')
+            prod = Producto.query.get(id_prod)
+            
+            if prod and prod.es_combo:
+                ComboItem.query.filter_by(promo_id=prod.id).delete()
+                
+            if prod:
+                db.session.delete(prod)
+                db.session.commit()
+                flash(f"Producto '{prod.nombre}' eliminado.")
+        
+        elif accion == 'crear':
+            nombre = request.form.get('nombre')
+            precio = float(request.form.get('precio'))
+            tipo = request.form.get('tipo') 
+            
+            if tipo == 'combo':
+                nuevo_prod = Producto(
+                    nombre=nombre, 
+                    precio=precio, 
+                    es_helado=True, 
+                    es_combo=True, 
+                    peso_helado=0 
+                )
+                db.session.add(nuevo_prod)
+                db.session.flush()
+
+                componentes = request.form.getlist('componentes') 
+                for item_id in componentes:
+                    cantidad = int(request.form.get(f'cantidad_{item_id}', 1))
+                    if cantidad > 0:
+                        db.session.add(ComboItem(promo_id=nuevo_prod.id, item_id=item_id, cantidad=cantidad))
+                
+                db.session.commit()
+                flash(f"Combo '{nombre}' creado con éxito.")
+
             else:
-                exito, msg = gestor.eliminar_usuario(id_borrar)
-                flash(msg)
+                insumo_id = request.form.get('insumo_id') 
+                es_helado = False
+                peso = 0
+                if tipo == 'helado':
+                    es_helado = True
+                    peso = float(request.form.get('peso', 0))
+                
+                id_insumo_final = int(insumo_id) if insumo_id else None
 
-    return render_template('admin_usuarios.html', usuarios=gestor.obtener_usuarios())
+                nuevo_prod = Producto(
+                    nombre=nombre, 
+                    precio=precio, 
+                    es_helado=es_helado, 
+                    peso_helado=peso, 
+                    es_combo=False, 
+                    insumo_id=id_insumo_final
+                )
+                db.session.add(nuevo_prod)
+                db.session.commit()
+                flash(f"Producto '{nombre}' creado.")
 
-# GESTIÓN DE PROMOS (CONFIGURADOR)
-@app.route('/admin/promos', methods=['GET', 'POST'])
+        return redirect(url_for('gestion_precios'))
+        
+    productos = gestor.obtener_productos()
+    return render_template('admin_precios.html', productos=productos, insumos=insumos, productos_para_combo=todos_los_productos)
+
+# --- REPORTES EXCEL (GESTOR MULTI-HOJA) ---
+@app.route('/admin/reporte', methods=['POST'])
 @login_required
-def gestion_promos():
+def descargar_reporte():
     if current_user.rol != 'admin': return redirect(url_for('vender'))
     
-    promos_disponibles = Producto.query.filter_by(es_combo=True).all()
-    productos_disponibles = Producto.query.all()
-    
-    promo_seleccionada = None
-    items_actuales = []
+    fecha_inicio_str = request.form.get('fecha_inicio')
+    fecha_fin_str = request.form.get('fecha_fin')
 
-    id_seleccionado = request.args.get('id_promo')
-    
-    if request.method == 'POST':
-        accion = request.form.get('accion')
-        id_promo_form = request.form.get('id_promo_actual')
+    try:
+        fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d')
+        fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
         
-        if accion == 'agregar_item':
-            id_prod_hijo = request.form.get('id_producto_hijo')
-            cantidad = request.form.get('cantidad')
-            exito, msg = gestor.agregar_item_a_promo(id_promo_form, id_prod_hijo, cantidad)
-            flash(msg)
-            return redirect(url_for('gestion_promos', id_promo=id_promo_form))
+        excel_file = gestor.generar_reporte_excel(fecha_inicio, fecha_fin)
 
-        elif accion == 'eliminar_item':
-            id_combo_item = request.form.get('id_combo_item')
-            exito, msg = gestor.eliminar_item_de_promo(id_combo_item)
-            flash(msg)
-            return redirect(url_for('gestion_promos', id_promo=id_promo_form))
+        if not excel_file:
+            flash("No hay ventas en ese rango.")
+            return redirect(url_for('admin_dashboard'))
 
-    if id_seleccionado:
-        promo_seleccionada = Producto.query.get(id_seleccionado)
-        items_actuales = gestor.obtener_items_de_promo(id_seleccionado)
+        return send_file(excel_file, as_attachment=True, download_name=f"Reporte_{fecha_inicio_str}.xlsx", mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-    return render_template('admin_promos.html', 
-                           promos=promos_disponibles,
-                           productos=productos_disponibles,
-                           promo_actual=promo_seleccionada,
-                           items=items_actuales)
+    except Exception as e:
+        print(f"Error reporte: {e}")
+        flash("Error fechas.")
+        return redirect(url_for('admin_dashboard'))
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', debug=True)
+    app.run(debug=True)

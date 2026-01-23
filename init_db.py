@@ -1,134 +1,106 @@
-# init_db.py - CARGA COMPLETA DE DATOS
-from flask import Flask
-from models import db, Usuario, Sabor, Insumo, Producto, ComboItem
-
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///heladeria.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db.init_app(app)
+# init_db.py - ACTUALIZADO FASE 1 & 2
+from app import app, db
+from models import Usuario, Producto, Insumo, Sabor, ComboItem
 
 def cargar_datos_completos():
     with app.app_context():
+        # 1. BORRÓN Y CUENTA NUEVA
+        print("🗑️ Borrando base de datos antigua...")
+        db.drop_all()
+        print("🏗️ Creando nuevas tablas con Stock Separado...")
         db.create_all()
+
+        # 2. CREAR USUARIOS (Uno para cada Rol/Sucursal)
+        print("👤 Creando Usuarios...")
+        # Admin Global (Ve todo)
+        u1 = Usuario(username="admin", password="123", rol="admin", sucursal="General")
+        # Vendedor Máximo Paz
+        u2 = Usuario(username="maximo", password="123", rol="vendedor", sucursal="Máximo Paz")
+        # Vendedor Tristán Suárez
+        u3 = Usuario(username="tristan", password="123", rol="vendedor", sucursal="Tristán Suárez")
         
-        # ---------------------------------------------------------
-        # 1. CREAR USUARIOS
-        # ---------------------------------------------------------
-        if not Usuario.query.first():
-            print("👤 Creando Usuarios...")
-            usuarios = [
-                Usuario(username="admin", password="123", rol="admin", sucursal="General"),
-                Usuario(username="tristan", password="123", rol="vendedor", sucursal="Tristán Suárez"),
-                Usuario(username="maximo", password="123", rol="vendedor", sucursal="Máximo Paz"),
-            ]
-            db.session.add_all(usuarios)
-            db.session.commit()
+        db.session.add_all([u1, u2, u3])
 
-        # ---------------------------------------------------------
-        # 2. CREAR INSUMOS (Los envases físicos)
-        # ---------------------------------------------------------
-        if not Insumo.query.first():
-            print("📦 Creando Insumos...")
-            # Definimos nombre y stock inicial
-            lista_insumos = [
-                ("Pote 1/4", 200),
-                ("Pote 1/2", 100),
-                ("Pote 1kg", 100),
-                ("Cucurucho Pasta", 300),  # Para Cucuruchón
-                ("Cucurucho Grande", 300),
-                ("Cucurucho Chico", 300),
-                ("Tacita Plastico", 500),
-                ("Vaso Batido", 100),
-                ("Vaso Cafeteria", 100),
-                ("Vaso Plastico", 500),    # Para item "Vasos"
-                ("Paq. Cucuruchos x3", 50),
-                ("Paq. Cucuruchos x5", 50),
-                ("Sin Insumo", 999999)     # Para promos o cosas sin envase
-            ]
+        # 3. CREAR INSUMOS (Con stock separado)
+        print("📦 Creando Insumos...")
+        insumos_data = [
+            # Nombre, Stock Inicial MP, Stock Inicial TS
+            ("Cucurucho Chico", 200, 200),
+            ("Cucurucho Grande", 150, 150),
+            ("Vaso Térmico 1kg", 50, 50),
+            ("Vaso Térmico 1/2kg", 60, 60),
+            ("Vaso Térmico 1/4kg", 80, 80),
+            ("Vasito Colegial", 300, 300),
+        ]
+
+        # Guardamos referencia para usar los IDs en los productos
+        insumos_objs = {} 
+
+        for nombre, stock_mp, stock_ts in insumos_data:
+            insumo = Insumo(nombre=nombre, stock_maximo=stock_mp, stock_tristan=stock_ts)
+            db.session.add(insumo)
+            # Hacemos flush para que se genere el ID sin commitear todavía
+            db.session.flush() 
+            insumos_objs[nombre] = insumo.id
+
+        # 4. CREAR LISTA DE PRECIOS (PRODUCTOS)
+        print("💲 Creando Lista de Precios...")
+        productos = [
+            # HELADOS (Asociados a sus insumos)
+            {"nombre": "1 kg", "precio": 12000, "es_helado": True, "peso": 1000, "insumo": "Vaso Térmico 1kg"},
+            {"nombre": "1/2 kg", "precio": 7000, "es_helado": True, "peso": 500, "insumo": "Vaso Térmico 1/2kg"},
+            {"nombre": "1/4 kg", "precio": 4000, "es_helado": True, "peso": 250, "insumo": "Vaso Térmico 1/4kg"},
+            {"nombre": "Cucurucho Grande", "precio": 3500, "es_helado": True, "peso": 180, "insumo": "Cucurucho Grande"},
+            {"nombre": "Cucurucho Chico", "precio": 2500, "es_helado": True, "peso": 120, "insumo": "Cucurucho Chico"},
+            {"nombre": "Vasito", "precio": 2000, "es_helado": True, "peso": 100, "insumo": "Vasito Colegial"},
             
-            for nombre, stock in lista_insumos:
-                db.session.add(Insumo(nombre=nombre, stock=stock))
-            db.session.commit()
-
-        # Helper para buscar insumo rápido por nombre
-        def get_ins(nombre):
-            return Insumo.query.filter_by(nombre=nombre).first()
-
-        # ---------------------------------------------------------
-        # 3. CREAR PRODUCTOS (Lista de Precios)
-        # ---------------------------------------------------------
-        if not Producto.query.first():
-            print("💲 Creando Lista de Precios...")
-            # Formato: (Nombre, Precio, EsHelado, PesoGr, MaxGustos, NombreInsumo)
-            productos = [
-                ("1/4 S/tapa", 4000, True, 250, 3, "Pote 1/4"),
-                ("1/4 C/tapa", 4000, True, 250, 3, "Pote 1/4"),
-                ("1/2 kg", 8000, True, 500, 3, "Pote 1/2"),
-                ("1 kg", 16000, True, 1000, 4, "Pote 1kg"),
-                ("Cucuruchon", 7000, True, 150, 2, "Cucurucho Pasta"),
-                ("Cucurucho Gran", 6000, True, 120, 2, "Cucurucho Grande"),
-                ("Cucurucho Chi", 5000, True, 80, 1, "Cucurucho Chico"),
-                ("Tacita", 4000, True, 80, 1, "Tacita Plastico"),
-                ("Batitos", 4500, True, 300, 2, "Vaso Batido"),
-                ("Cafeteria", 5000, False, 0, 0, "Vaso Cafeteria"),
-                ("Vasos", 4000, False, 0, 0, "Vaso Plastico"),
-                ("Paq. x 3", 5000, False, 0, 0, "Paq. Cucuruchos x3"),
-                ("Paq. x 5", 6500, False, 0, 0, "Paq. Cucuruchos x5"),
-            ]
-
-            for p in productos:
-                insumo_obj = get_ins(p[5])
-                nuevo = Producto(
-                    nombre=p[0], precio=p[1], es_helado=p[2], 
-                    peso_helado=p[3], max_gustos=p[4], insumo=insumo_obj
-                )
-                db.session.add(nuevo)
+            # EXTRAS / OTROS
+            {"nombre": "Baño de Chocolate", "precio": 1500, "es_helado": False, "peso": 0, "insumo": None},
             
-            # --- PROMOS (COMBOS) ---
-            # Promo 1: $20.000
-            promo1 = Producto(nombre="Promo 1", precio=20000, es_combo=True)
-            # Promo 2: $18.000
-            promo2 = Producto(nombre="Promo 2", precio=18000, es_combo=True)
-            # Promo 3: $21.000 (Patagonico)
-            promo3 = Producto(nombre="Promo 3 (Patagonico)", precio=21000, es_combo=True)
-            
-            db.session.add_all([promo1, promo2, promo3])
-            db.session.commit()
+            # COMBOS (Promociones)
+            {"nombre": "Promo 2 Kilos", "precio": 22000, "es_helado": False, "es_combo": True, "peso": 0, "insumo": None},
+        ]
 
-        # ---------------------------------------------------------
-        # 4. CREAR SABORES (Lista completa de la imagen)
-        # ---------------------------------------------------------
-        if not Sabor.query.first():
-            print("🍦 Creando Sabores...")
-            lista_sabores = [
-                # Dulces de Leche
-                "Dulce de Leche", "Dulce de Leche Granizado", "Super Dulce de Leche",
-                "Dulce de Leche Brownie", "Dulce de Leche Tecio",
-                # Chocolates
-                "Chocolate", "Chocolate Blanco", "Chocolate Granizado", 
-                "Chocolate Marroc", "Chocolate Tecio", "Chocolate con Almendras", 
-                "Chocolate Patagonico", "Chocolate Dubai", "Chocolate Kinder", 
-                "Chocolate Nutella",
-                # Cremas
-                "Almendrado", "Banana", "Bananita Dolca", "Cereza a la Crema",
-                "Crema Americana", "Crema Del Cielo", "Crema Oreo", "Crema Rusa",
-                "Crema Baileys", "Mouse de Limon Tecio", "Bonobon", "Pistacho",
-                "Sambayón", "Chocotorta", "Capitan del Espacio", "Flan con dulce de Leche",
-                "Granizado", "Mantecol", "Tiramisu", "Tramontana", "Vainilla Al oreo",
-                # Frutales
-                "Frutilla Cadbury", "Frutilla A la reina", "Frutilla a la Crema", 
-                "Tecio Frauni", "Frutos del bosque", "Maracuya", "Menta Granizada",
-                "Lemon Pie", "Anana", "Durazno", "Frutilla al Agua", "Limon"
-            ]
+        prod_objs = {}
 
-            for nombre in lista_sabores:
-                # 10kg iniciales por sabor (10000g)
-                db.session.add(Sabor(nombre=nombre, stock_gramos=10000))
-            
-            db.session.commit()
+        for p in productos:
+            insumo_id = insumos_objs.get(p["insumo"]) if p["insumo"] else None
+            nuevo_prod = Producto(
+                nombre=p["nombre"],
+                precio=p["precio"],
+                es_helado=p.get("es_helado", False),
+                peso_helado=p.get("peso", 0),
+                es_combo=p.get("es_combo", False),
+                insumo_id=insumo_id
+            )
+            db.session.add(nuevo_prod)
+            db.session.flush()
+            prod_objs[p["nombre"]] = nuevo_prod.id
 
-        print("✅ Base de datos restaurada COMPLETAMENTE (Usuarios + Productos + Sabores)")
+        # 5. CONFIGURAR COMBOS (Relacionar items)
+        # Ejemplo: La Promo 2 Kilos está hecha de dos "1 kg"
+        id_promo = prod_objs["Promo 2 Kilos"]
+        id_item = prod_objs["1 kg"]
+        
+        # Agregamos 2 items de "1 kg" a la promo
+        db.session.add(ComboItem(promo_id=id_promo, item_id=id_item, cantidad=2))
+
+        # 6. CREAR SABORES (Con stock separado en 0)
+        print("🍦 Creando Sabores...")
+        sabores_lista = [
+            "Chocolate", "Chocolate con Almendras", "Chocolate Blanco",
+            "Dulce de Leche", "Dulce de Leche Granizado", "Super Dulce de Leche",
+            "Frutilla a la Crema", "Frutilla al Agua", "Limon",
+            "Americana", "Vainilla", "Tramontana", "Sambayon", "Menta Granizada"
+        ]
+
+        for s in sabores_lista:
+            # Aquí está el CAMBIO CLAVE: stock_maximo y stock_tristan en vez de stock_gramos
+            db.session.add(Sabor(nombre=s, stock_maximo=0, stock_tristan=0, activo=True))
+
+        # GUARDAR TODO
+        db.session.commit()
+        print("✅ Base de datos restaurada COMPLETAMENTE (Usuarios + Productos + Sabores + Stocks Separados)")
 
 if __name__ == "__main__":
     cargar_datos_completos()

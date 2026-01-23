@@ -1,239 +1,295 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>Venta Táctil</title>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
-    <style>
-        /* --- ESTILOS BASE --- */
-        body { font-family: 'Roboto', sans-serif; background-color: #f0f2f5; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row fade-in">
+    <div class="col-md-8">
         
-        /* Layout principal: En PC es lado a lado, en Móvil es columna */
-        .main-container { display: flex; flex: 1; overflow: hidden; }
-        
-        /* IZQUIERDA: SELECCIÓN */
-        .selection-area { flex: 2; padding: 15px; overflow-y: auto; padding-bottom: 80px; } /* Padding bottom para que el botón flotante no tape el final */
-        
-        /* DERECHA: CARRITO (En PC) */
-        .cart-area { flex: 1; background: white; border-left: 1px solid #ddd; display: flex; flex-direction: column; padding: 20px; box-shadow: -2px 0 10px rgba(0,0,0,0.05); }
-
-        /* Estilos de Componentes */
-        h2, h3 { color: #2c3e50; margin-top: 0; }
-        .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-        .back-link { text-decoration: none; color: #7f8c8d; font-weight: bold; font-size: 0.9rem; }
-
-        /* Select Grande y Táctil */
-        select.nice-select { width: 100%; padding: 15px; font-size: 1.1rem; border: 1px solid #ccc; border-radius: 12px; background: white; margin-bottom: 20px; -webkit-appearance: none; }
-
-        /* --- ACORDEONES DE CATEGORÍAS --- */
-        details { background: white; border-radius: 12px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); overflow: hidden; }
-        summary { padding: 15px; font-weight: bold; cursor: pointer; list-style: none; background-color: #fff; display: flex; justify-content: space-between; align-items: center; }
-        summary:after { content: '+'; font-size: 1.5rem; color: #3498db; }
-        details[open] summary { border-bottom: 1px solid #eee; background-color: #f8f9fa; }
-        details[open] summary:after { content: '-'; }
-        
-        .flavors-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; padding: 15px; }
-
-        /* Botones de Sabor */
-        .sabor-option input { display: none; }
-        .sabor-card { 
-            background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 10px; 
-            text-align: center; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;
-            transition: all 0.1s; min-height: 80px;
-        }
-        .sabor-card strong { font-size: 0.9rem; display: block; line-height: 1.2; }
-        .sabor-card small { font-size: 0.75rem; color: #888; margin-top: 5px; }
-        
-        /* Seleccionado */
-        .sabor-option input:checked + .sabor-card { border: 2px solid #3498db; background-color: #eaf6fd; transform: scale(0.98); }
-        .sabor-card.disabled { opacity: 0.5; background: #eee; }
-
-        /* --- BOTÓN FLOTANTE "AGREGAR" --- */
-        .sticky-footer {
-            position: sticky; bottom: 0; background: linear-gradient(to top, #f0f2f5 80%, transparent);
-            padding: 10px 0; margin-top: 20px; z-index: 5; text-align: center;
-        }
-        .btn-add {
-            background: #3498db; color: white; border: none; padding: 18px; width: 100%; 
-            border-radius: 50px; font-size: 1.2rem; font-weight: bold; cursor: pointer;
-            box-shadow: 0 4px 15px rgba(52, 152, 219, 0.4);
-        }
-        .btn-add:active { transform: scale(0.98); }
-
-        /* --- CARRITO --- */
-        .cart-list { list-style: none; padding: 0; flex-grow: 1; overflow-y: auto; }
-        .cart-item { background: #f8f9fa; border-radius: 8px; padding: 10px; margin-bottom: 8px; position: relative; border-left: 4px solid #3498db; font-size: 0.9rem;}
-        .cart-item span { font-weight: bold; color: #2ecc71; }
-        .btn-delete { position: absolute; top: 5px; right: 5px; color: red; background: none; border: none; font-size: 1.2rem; padding: 5px; }
-
-        .total-display { font-size: 1.5rem; font-weight: bold; text-align: right; margin: 10px 0; }
-        .btn-pay { background: #27ae60; color: white; border: none; padding: 15px; width: 100%; border-radius: 12px; font-size: 1.2rem; font-weight: bold; }
-
-        /* --- MODO CELULAR (RESPONSIVE) --- */
-        @media (max-width: 768px) {
-            .main-container { flex-direction: column; overflow-y: auto; } /* Scroll general */
-            .selection-area { overflow: visible; padding-bottom: 20px; } /* Quitar scroll interno */
-            
-            /* El carrito pasa abajo */
-            .cart-area { 
-                border-left: none; border-top: 2px solid #eee; 
-                padding: 15px; 
-                background: #fff;
-            }
-            
-            /* Ajuste de la grilla de sabores para dedos */
-            .flavors-grid { grid-template-columns: repeat(3, 1fr); } 
-            
-            /* El carrito horizontal */
-            .cart-list { display: flex; overflow-x: auto; gap: 10px; padding-bottom: 10px; max-height: 120px; }
-            .cart-item { min-width: 200px; margin-bottom: 0; }
-        }
-    </style>
-</head>
-<body>
-
-    <div class="main-container">
-        
-        <div class="selection-area">
-            <div class="header-bar">
-                <h2>🍨 Nuevo Pedido</h2>
-                <a href="/" class="back-link">Salir</a>
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">1️⃣ Paso 1: Elige el Producto</h5>
             </div>
-
-            <select id="formato" class="nice-select">
-                {% for p in productos %}
-                <option value="{{ p.nombre }}" 
-                        data-max="{{ p.max_gustos }}" 
-                        data-precio="{{ p.precio }}"
-                        data-es-helado="{{ 'si' if p.es_helado else 'no' }}">
-                    {{ p.nombre }} - ${{ p.precio }}
-                </option>
-                {% endfor %}
-            </select>
-
-            <div id="contenedor-sabores">
-                {% for categoria, items in sabores_agrupados.items() %}
-                <details {{ 'open' if loop.first else '' }}> <summary>{{ categoria }}</summary>
-                    <div class="flavors-grid">
-                        {% for s in items %}
-                        <label class="sabor-option">
-                            <input type="checkbox" class="sabor-check" value="{{ s.nombre }}" {{ 'disabled' if s.stock_gramos < 50 else '' }}>
-                            <div class="sabor-card {{ 'disabled' if s.stock_gramos < 50 else '' }}">
-                                <strong>{{ s.nombre }}</strong>
-                                {% if s.stock_gramos < 1000 %}
-                                    <small style="color:red">Poco Stock</small>
-                                {% endif %}
-                            </div>
-                        </label>
-                        {% endfor %}
+            <div class="card-body">
+                <div class="row" id="contenedor-productos">
+                    {% for p in productos %}
+                    <div class="col-md-3 col-6 mb-2">
+                        <button class="btn btn-outline-primary w-100 py-3 btn-producto" 
+                                data-nombre="{{ p.nombre }}" 
+                                data-precio="{{ p.precio }}"
+                                data-helado="{{ 'si' if p.es_helado else 'no' }}">
+                            <strong>{{ p.nombre }}</strong><br>
+                            <small>${{ p.precio }}</small>
+                        </button>
                     </div>
-                </details>
-                {% endfor %}
-            </div>
-
-            <div class="sticky-footer">
-                <button class="btn-add" onclick="agregarAlCarrito()">+ AGREGAR ITEM</button>
+                    {% endfor %}
+                </div>
             </div>
         </div>
 
-        <div class="cart-area">
-            <h3 style="font-size: 1rem; margin-bottom: 10px;">Tu Pedido Actual:</h3>
-            
-            <ul id="carrito-display" class="cart-list">
-                <li style="color: #aaa; padding: 10px;">Nada agregado aún...</li>
-            </ul>
-
-            <div style="margin-top: auto;">
-                <div id="total-price" class="total-display">Total: $0</div>
+        <div class="card shadow-sm" id="card-sabores" style="display:none;">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">2️⃣ Paso 2: Elige Sabores (Opcional)</h5>
+                <small>Máximo: <span id="max-gustos">4</span></small>
+            </div>
+            <div class="card-body p-2">
+                <input type="text" id="buscador-sabores" class="form-control mb-3" placeholder="🔍 Buscar gusto...">
                 
-                <div style="display: flex; gap: 10px;">
-                    <select id="medio_pago" class="nice-select" style="margin-bottom: 0;">
-                        <option value="Efectivo">Efectivo</option>
-                        <option value="Tarjeta">Tarjeta</option>
-                        <option value="QR">MercadoPago</option>
-                    </select>
-                    <button class="btn-pay" onclick="finalizarVenta()">COBRAR</button>
+                <div class="row g-2" id="contenedor-sabores" style="max-height: 400px; overflow-y: auto;">
+                    {% for s in sabores %}
+                    <div class="col-md-3 col-4">
+                        <button class="btn btn-outline-dark w-100 text-truncate btn-sabor" 
+                                data-nombre="{{ s.nombre }}"
+                                style="font-size: 0.9rem;">
+                            {{ s.nombre }}
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+                
+                <div class="mt-3 text-end">
+                    <button class="btn btn-success btn-lg" id="btn-confirmar-item">
+                        ✅ Confirmar (<span id="contador-gustos">0</span>)
+                    </button>
                 </div>
             </div>
         </div>
 
     </div>
 
-    <script>
-        // --- JAVASCRIPT IGUAL QUE ANTES (Funcionalidad no cambia) ---
-        let carrito = [];
+    <div class="col-md-4">
+        <div class="card shadow-sm border-primary">
+            <div class="card-header bg-primary text-white text-center">
+                <h4 class="mb-0">🛒 Tu Pedido</h4>
+            </div>
+            <div class="card-body p-0">
+                <ul id="lista-carrito" class="list-group list-group-flush" style="min-height: 300px; max-height: 500px; overflow-y: auto;">
+                    </ul>
+            </div>
+            <div class="card-footer bg-light">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h3>Total:</h3>
+                    <h2 class="text-primary fw-bold">$<span id="total-carrito">0</span></h2>
+                </div>
+                
+                <div class="d-grid gap-2">
+                    <button class="btn btn-success btn-lg py-3" onclick="finalizarVenta('Efectivo')">
+                        💵 COBRAR EFECTIVO
+                    </button>
+                    <div class="row g-1">
+                        <div class="col-6">
+                            <button class="btn btn-info w-100 text-white" onclick="finalizarVenta('MercadoPago')">
+                                📱 QR / MP
+                            </button>
+                        </div>
+                        <div class="col-6">
+                            <button class="btn btn-warning w-100 text-white" onclick="finalizarVenta('Tarjeta')">
+                                💳 TARJETA
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
-        function agregarAlCarrito() {
-            const selectFormato = document.getElementById('formato');
-            const option = selectFormato.options[selectFormato.selectedIndex];
-            const nombreFormato = selectFormato.value;
-            const maxGustos = parseInt(option.dataset.max);
-            const precio = parseInt(option.dataset.precio);
-            const esHelado = option.dataset.esHelado === 'si';
+<script>
+    let carrito = [];
+    let productoSeleccionado = null;
+    let gustosSeleccionados = [];
+    const MAX_GUSTOS = 4; // Puedes ajustar esto o hacerlo dinámico según el tamaño
 
-            let saboresElegidos = [];
-            if (esHelado) {
-                document.querySelectorAll('.sabor-check:checked').forEach(chk => saboresElegidos.push(chk.value));
-                if (saboresElegidos.length === 0 && maxGustos > 0) { alert("Elige al menos 1 gusto"); return; }
-                if (saboresElegidos.length > maxGustos) { alert(`Máximo ${maxGustos} gustos`); return; }
-            }
-
-            carrito.push({ formato: nombreFormato, sabores: saboresElegidos, precio: precio });
-            renderizarCarrito();
+    // --- 1. SELECCIONAR PRODUCTO ---
+    document.querySelectorAll('.btn-producto').forEach(btn => {
+        btn.addEventListener('click', function() {
+            // Reset visual
+            document.querySelectorAll('.btn-producto').forEach(b => b.classList.remove('active', 'btn-primary'));
+            document.querySelectorAll('.btn-producto').forEach(b => b.classList.add('btn-outline-primary'));
             
-            // Limpiar y cerrar acordeones opcionalmente
-            document.querySelectorAll('.sabor-check').forEach(chk => chk.checked = false);
-            // Scroll al final para ver que se agregó (opcional)
-        }
+            // Activar botón
+            this.classList.remove('btn-outline-primary');
+            this.classList.add('btn-primary', 'active');
 
-        function renderizarCarrito() {
-            const display = document.getElementById('carrito-display');
-            display.innerHTML = "";
-            let total = 0;
+            productoSeleccionado = {
+                nombre: this.dataset.nombre,
+                precio: parseFloat(this.dataset.precio),
+                esHelado: this.dataset.helado === 'si'
+            };
 
-            if (carrito.length === 0) {
-                display.innerHTML = '<li style="color:#aaa;">Nada agregado</li>';
+            // Reset gustos
+            gustosSeleccionados = [];
+            actualizarVisualGustos();
+
+            if (productoSeleccionado.esHelado) {
+                document.getElementById('card-sabores').style.display = 'block';
+                // Scroll automático hacia sabores
+                document.getElementById('card-sabores').scrollIntoView({behavior: 'smooth'});
             } else {
-                carrito.forEach((item, index) => {
-                    total += item.precio;
-                    const li = document.createElement('li');
-                    li.className = 'cart-item';
-                    let gustos = item.sabores.length ? `<br><small>${item.sabores.join(', ')}</small>` : '';
-                    li.innerHTML = `
-                        ${item.formato} <span>$${item.precio}</span>
-                        ${gustos}
-                        <button class="btn-delete" onclick="eliminarItem(${index})">🗑️</button>
-                    `;
-                    display.appendChild(li);
-                });
+                // Si no es helado (ej: gaseosa), se agrega directo
+                document.getElementById('card-sabores').style.display = 'none';
+                agregarAlCarrito();
             }
-            document.getElementById('total-price').innerText = `Total: $${total}`;
-        }
+        });
+    });
 
-        function eliminarItem(index) {
-            carrito.splice(index, 1);
-            renderizarCarrito();
-        }
+    // --- 2. SELECCIONAR SABORES ---
+    document.querySelectorAll('.btn-sabor').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const nombreSabor = this.dataset.nombre;
 
-        function finalizarVenta() {
-            if (carrito.length === 0) return;
-            const pago = document.getElementById('medio_pago').value;
-            
-            fetch('/vender', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({items: carrito, medio_pago: pago})
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.status === 'ok') {
-                    alert("✅ Venta OK!");
-                    location.reload();
-                } else {
-                    alert("❌ " + data.msg);
+            if (gustosSeleccionados.includes(nombreSabor)) {
+                // Deseleccionar
+                gustosSeleccionados = gustosSeleccionados.filter(g => g !== nombreSabor);
+                this.classList.remove('btn-dark');
+                this.classList.add('btn-outline-dark');
+            } else {
+                // Seleccionar (si no pasó el límite)
+                if (gustosSeleccionados.length < MAX_GUSTOS) {
+                    gustosSeleccionados.push(nombreSabor);
+                    this.classList.remove('btn-outline-dark');
+                    this.classList.add('btn-dark');
                 }
-            });
+            }
+            actualizarContadorGustos();
+        });
+    });
+
+    // Buscador de Sabores (Filtro en tiempo real)
+    document.getElementById('buscador-sabores').addEventListener('keyup', function() {
+        const busqueda = this.value.toLowerCase();
+        document.querySelectorAll('.btn-sabor').forEach(btn => {
+            const texto = btn.innerText.toLowerCase();
+            if (texto.includes(busqueda)) {
+                btn.parentElement.style.display = 'block';
+            } else {
+                btn.parentElement.style.display = 'none';
+            }
+        });
+    });
+
+    // Botón Confirmar Gustos
+    document.getElementById('btn-confirmar-item').addEventListener('click', function() {
+        if (!productoSeleccionado) return;
+        agregarAlCarrito();
+        
+        // Resetear selección para el próximo item
+        document.getElementById('card-sabores').style.display = 'none';
+        document.querySelectorAll('.btn-producto').forEach(b => b.classList.remove('active', 'btn-primary'));
+        document.querySelectorAll('.btn-producto').forEach(b => b.classList.add('btn-outline-primary'));
+        document.querySelectorAll('.btn-sabor').forEach(b => {
+            b.classList.remove('btn-dark');
+            b.classList.add('btn-outline-dark');
+        });
+        gustosSeleccionados = [];
+        productoSeleccionado = null;
+        actualizarContadorGustos();
+        
+        // Scroll arriba
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    function actualizarContadorGustos() {
+        document.getElementById('contador-gustos').innerText = gustosSeleccionados.length;
+    }
+
+    function actualizarVisualGustos() {
+        document.querySelectorAll('.btn-sabor').forEach(b => {
+            b.classList.remove('btn-dark');
+            b.classList.add('btn-outline-dark');
+        });
+        actualizarContadorGustos();
+    }
+
+    // --- 3. CARRITO ---
+    function agregarAlCarrito() {
+        // Clonamos los gustos para que no se borren por referencia
+        let item = {
+            formato: productoSeleccionado.nombre,
+            precio: productoSeleccionado.precio,
+            sabores: [...gustosSeleccionados] 
+        };
+        carrito.push(item);
+        renderizarCarrito();
+    }
+
+    function renderizarCarrito() {
+        const lista = document.getElementById('lista-carrito');
+        const totalSpan = document.getElementById('total-carrito');
+        lista.innerHTML = '';
+        let total = 0;
+
+        carrito.forEach((item, index) => {
+            total += item.precio;
+            
+            let htmlSabores = '';
+            if (item.sabores.length > 0) {
+                htmlSabores = `<small class="text-muted d-block" style="font-size:0.8em">(${item.sabores.join(', ')})</small>`;
+            } else if (productoSeleccionado && productoSeleccionado.esHelado) {
+                // Opcional: Mostrar que va vacío si era helado
+                // htmlSabores = '<small class="text-danger d-block" style="font-size:0.8em">(Sin gustos seleccionados)</small>';
+            }
+
+            const li = document.createElement('li');
+            li.className = 'list-group-item d-flex justify-content-between align-items-center';
+            li.innerHTML = `
+                <div>
+                    <h6 class="my-0">${item.formato}</h6>
+                    ${htmlSabores}
+                </div>
+                <div class="d-flex align-items-center">
+                    <span class="fw-bold me-3">$${item.precio}</span>
+                    <button class="btn btn-sm btn-outline-danger" onclick="eliminarDelCarrito(${index})">X</button>
+                </div>
+            `;
+            lista.appendChild(li);
+        });
+
+        totalSpan.innerText = total.toLocaleString();
+    }
+
+    function eliminarDelCarrito(index) {
+        carrito.splice(index, 1);
+        renderizarCarrito();
+    }
+
+    // --- 4. ENVIAR AL SERVIDOR (COBRAR) ---
+    function finalizarVenta(medioPago) {
+        if (carrito.length === 0) {
+            alert('El carrito está vacío');
+            return;
         }
-    </script>
-</body>
-</html>
+
+        if (!confirm(`¿Confirmar venta por $${document.getElementById('total-carrito').innerText} en ${medioPago}?`)) {
+            return;
+        }
+
+        // Enviar datos a Flask con Fetch API
+        fetch('/vender', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                items: carrito,
+                medio_pago: medioPago
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Éxito
+                carrito = [];
+                renderizarCarrito();
+                alert('✅ Venta registrada correctamente!');
+                // Opcional: Recargar página para limpiar todo visualmente
+                // location.reload();
+            } else {
+                alert('❌ Error: ' + data.msg);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error de conexión.');
+        });
+    }
+</script>
+{% endblock %}

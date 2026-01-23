@@ -3,5 +3,3 @@ Flask-SQLAlchemy
 Flask-Login
 pandas
 openpyxl
-gunicorn
-numpy
